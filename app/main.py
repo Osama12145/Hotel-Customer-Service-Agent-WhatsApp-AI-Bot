@@ -45,6 +45,10 @@ async def whatsapp_webhook(request: Request) -> JSONResponse:
             parsed.message_id,
         )
 
+        if parsed.from_me:
+            logger.info("Ignoring outgoing/self message %s", parsed.message_id)
+            return JSONResponse({"status": "ignored_from_me"})
+
         trace_id, _ = langfuse.create_trace(
             name="whatsapp-webhook",
             user_id=parsed.remote_jid,

@@ -11,6 +11,7 @@ class ParsedIncomingMessage(BaseModel):
     instance: str
     message_id: str
     remote_jid: str
+    from_me: bool = False
     push_name: str | None = None
     message_type: Literal["text", "audio", "image", "unsupported"]
     text: str | None = None

@@ -18,7 +18,7 @@ class EvolutionService:
 
     async def send_text(self, instance: str, remote_jid: str, text: str) -> None:
         headers = {"apikey": self.settings.evolution_api_key}
-        payload = {"number": remote_jid, "text": text}
+        payload = {"number": self._jid_to_number(remote_jid), "text": text}
         url = f"{self.settings.evolution_base_url}/message/sendText/{instance}"
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(url, headers=headers, json=payload)
@@ -33,3 +33,7 @@ class EvolutionService:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             return response.json()
+
+    @staticmethod
+    def _jid_to_number(remote_jid: str) -> str:
+        return remote_jid.split("@", 1)[0]

@@ -20,6 +20,7 @@ class PayloadParser:
             instance=body["instance"],
             message_id=key["id"],
             remote_jid=key["remoteJid"],
+            from_me=bool(key.get("fromMe", False)),
             push_name=data.get("pushName"),
             message_type="unsupported",
             raw_payload=body,
