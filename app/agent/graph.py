@@ -92,7 +92,50 @@ class HotelAgent:
                 "message_id": state.message_id,
             },
         )
-        decision = AgentDecision.model_validate(json.loads(raw_decision))
+
+        try:
+            decision_payload = self.openrouter.parse_json_response(raw_decision)
+        except Exception as primary_error:
+            logger.warning(
+                "Primary decision parsing failed for session %s. Retrying with repair prompt. Error: %s",
+                state.session_id,
+                primary_error,
+            )
+            repaired_decision = await self.openrouter.complete_text(
+                system_prompt=(
+                    "Convert the following assistant output into valid JSON only. "
+                    "Do not add explanation, markdown, or code fences."
+                ),
+                user_prompt=(
+                    "Return valid JSON matching this schema exactly:\n"
+                    f"{json.dumps(AgentDecision.model_json_schema(), ensure_ascii=False)}\n\n"
+                    f"Text to repair:\n{raw_decision}"
+                ),
+                trace_id=getattr(state, "trace_id", None),
+                generation_name="agent-decision-repair",
+                session_id=state.session_id,
+                user_id=state.session_id,
+                metadata={"repair_attempt": True},
+            )
+            try:
+                decision_payload = self.openrouter.parse_json_response(repaired_decision)
+            except Exception:
+                logger.exception("Decision repair also failed for session %s", state.session_id)
+                decision_payload = {
+                    "intent": "handoff",
+                    "should_handoff": True,
+                    "handoff_reason": "تعذر تفسير رد النموذج بشكل موثوق.",
+                    "reply_text": (
+                        "أعتذر، حصلت مشكلة مؤقتة أثناء معالجة رسالتك. "
+                        "سيتم تحويل طلبك إلى موظف الخدمة ليتواصل معك قريبًا."
+                    ),
+                    "booking_details": {},
+                    "booking_ready_for_save": False,
+                    "needs_more_booking_info": False,
+                    "missing_booking_fields": [],
+                }
+
+        decision = AgentDecision.model_validate(decision_payload)
         state.decision = decision
         state.final_reply = decision.reply_text
         state.handoff_requested = decision.should_handoff

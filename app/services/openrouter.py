@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -113,8 +114,30 @@ class OpenRouterService:
             user_id=user_id,
             metadata=metadata,
         )
+        return self.parse_json_response(text)
+
+    @staticmethod
+    def parse_json_response(text: str) -> dict[str, Any]:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            raise ValueError("The model returned an empty response.")
+
         try:
-            return json.loads(text)
-        except json.JSONDecodeError as exc:
-            logger.warning("Failed to parse JSON response from model: %s", text)
-            raise ValueError("The model returned invalid JSON.") from exc
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Common model behavior is to wrap JSON in a fenced markdown block.
+        fenced_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", cleaned, re.DOTALL)
+        if fenced_match:
+            return json.loads(fenced_match.group(1))
+
+        # If the model added explanation around JSON, extract the first JSON object.
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidate = cleaned[start : end + 1]
+            return json.loads(candidate)
+
+        logger.warning("Failed to parse JSON response from model: %s", cleaned)
+        raise ValueError("The model returned invalid JSON.")
