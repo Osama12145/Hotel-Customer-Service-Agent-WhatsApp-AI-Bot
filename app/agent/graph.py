@@ -172,6 +172,8 @@ class HotelAgent:
     async def run(self, state: HotelAgentState) -> HotelAgentState:
         logger.info("Running agent for session %s", state.session_id)
         result = await self.graph.ainvoke(state)
+        if isinstance(result, dict):
+            result = HotelAgentState(**result)
         self.langfuse.update_trace(
             trace_id=getattr(result, "trace_id", None),
             output_payload={
