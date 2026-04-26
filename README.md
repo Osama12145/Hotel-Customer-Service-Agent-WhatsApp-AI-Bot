@@ -102,5 +102,3 @@ This makes it easier to debug:
 
 - Update `data/knowledge/hafawah.md` with the real hotel information.
 - Replace all example secrets in `.env`.
-- The first version uses simple text retrieval instead of embeddings so setup stays light.
-- When the hotel content grows, the retrieval layer can be upgraded to pgvector or another vector store.
