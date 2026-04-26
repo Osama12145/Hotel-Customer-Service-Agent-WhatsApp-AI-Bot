@@ -1,4 +1,4 @@
-# Hafawah WhatsApp Agent
+# Hotel WhatsApp Agent
 
 Backend service in Python for a hotel WhatsApp assistant using:
 
