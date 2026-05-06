@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -31,6 +32,51 @@ langfuse = LangfuseService()
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _normalize_base64_media(
+    base64_value: str | None,
+    mime_type: str | None,
+) -> tuple[str | None, str | None]:
+    if not base64_value:
+        return None, mime_type
+
+    if base64_value.startswith("data:"):
+        header, separator, data = base64_value.partition(",")
+        if separator:
+            header_mime = header.removeprefix("data:").split(";", 1)[0]
+            return data, header_mime or mime_type
+
+    return base64_value, mime_type
+
+
+def _extract_base64_media(
+    media_payload: dict[str, Any],
+    fallback_mime_type: str | None,
+) -> tuple[str | None, str | None]:
+    containers: list[dict[str, Any]] = []
+    data = media_payload.get("data")
+    if isinstance(data, dict):
+        containers.append(data)
+    containers.append(media_payload)
+
+    for container in containers:
+        base64_value = (
+            container.get("base64")
+            or container.get("media")
+            or container.get("mediaBase64")
+        )
+        if not base64_value:
+            continue
+        mime_type = (
+            container.get("mimetype")
+            or container.get("mimeType")
+            or container.get("mediaType")
+            or fallback_mime_type
+        )
+        return _normalize_base64_media(base64_value, mime_type)
+
+    return None, fallback_mime_type
 
 
 @app.post("/webhook/whatsapp")
@@ -124,18 +170,22 @@ async def _resolve_incoming_text(parsed, trace_id: str | None) -> str:
         return parsed.text or ""
 
     if parsed.message_type == "audio":
-        base64_audio = parsed.audio_base64
-        mime_type = parsed.audio_mime_type
+        base64_audio, mime_type = _normalize_base64_media(
+            parsed.audio_base64,
+            parsed.audio_mime_type,
+        )
         if not base64_audio:
             media_payload = await evolution.get_media_base64(
                 parsed.instance,
                 parsed.message_id,
                 convert_to_mp4=True,
             )
-            data = media_payload.get("data", {})
-            base64_audio = data.get("base64")
-            mime_type = mime_type or data.get("mimetype")
+            base64_audio, mime_type = _extract_base64_media(
+                media_payload,
+                "audio/mp4",
+            )
         if not base64_audio:
+            logger.warning("Audio message %s did not include base64 media", parsed.message_id)
             return ""
         return await media.transcribe_audio_with_trace(
             base64_audio=base64_audio,
@@ -146,18 +196,22 @@ async def _resolve_incoming_text(parsed, trace_id: str | None) -> str:
         )
 
     if parsed.message_type == "image":
-        base64_image = parsed.image_base64
-        mime_type = parsed.image_mime_type
+        base64_image, mime_type = _normalize_base64_media(
+            parsed.image_base64,
+            parsed.image_mime_type,
+        )
         if not base64_image:
             media_payload = await evolution.get_media_base64(
                 parsed.instance,
                 parsed.message_id,
                 convert_to_mp4=False,
             )
-            data = media_payload.get("data", {})
-            base64_image = data.get("base64")
-            mime_type = mime_type or data.get("mimetype")
+            base64_image, mime_type = _extract_base64_media(
+                media_payload,
+                mime_type or "image/jpeg",
+            )
         if not base64_image:
+            logger.warning("Image message %s did not include base64 media", parsed.message_id)
             return parsed.image_caption or ""
         return await media.analyze_image_with_trace(
             base64_image=base64_image,

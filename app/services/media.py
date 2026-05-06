@@ -134,4 +134,6 @@ class MediaService:
             return "mp3"
         if "wav" in mime_type:
             return "wav"
+        if "mp4" in mime_type or "m4a" in mime_type or "aac" in mime_type:
+            return "mp4"
         return "ogg"

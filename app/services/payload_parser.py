@@ -39,14 +39,14 @@ class PayloadParser:
         if message_type == "audioMessage":
             audio = message.get("audioMessage", {})
             parsed.message_type = "audio"
-            parsed.audio_base64 = message.get("base64")
+            parsed.audio_base64 = message.get("base64") or audio.get("base64")
             parsed.audio_mime_type = audio.get("mimetype")
             return parsed
 
         if message_type == "imageMessage":
             image = message.get("imageMessage", {})
             parsed.message_type = "image"
-            parsed.image_base64 = message.get("base64")
+            parsed.image_base64 = message.get("base64") or image.get("base64")
             parsed.image_mime_type = image.get("mimetype")
             parsed.image_caption = image.get("caption")
             return parsed
