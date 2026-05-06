@@ -25,9 +25,18 @@ class EvolutionService:
             response.raise_for_status()
         logger.info("Sent WhatsApp reply to %s", remote_jid)
 
-    async def get_media_base64(self, instance: str, message_id: str) -> dict:
+    async def get_media_base64(
+        self,
+        instance: str,
+        message_id: str,
+        *,
+        convert_to_mp4: bool = False,
+    ) -> dict:
         headers = {"apikey": self.settings.evolution_api_key}
-        payload = {"message": {"key": {"id": message_id}}, "convertToMp4": True}
+        payload = {
+            "message": {"key": {"id": message_id}},
+            "convertToMp4": convert_to_mp4,
+        }
         url = f"{self.settings.evolution_base_url}/chat/getBase64FromMediaMessage/{instance}"
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(url, headers=headers, json=payload)

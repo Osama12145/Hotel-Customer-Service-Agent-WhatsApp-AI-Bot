@@ -11,24 +11,29 @@ class PayloadParser:
     @staticmethod
     def parse(payload: dict[str, Any]) -> ParsedIncomingMessage:
         body = payload.get("body", payload)
-        data = body["data"]
-        message = data["message"]
-        key = data["key"]
+        data = body.get("data") or {}
+        message = data.get("message") or {}
+        key = data.get("key") or {}
         message_type = data.get("messageType", "")
 
         parsed = ParsedIncomingMessage(
-            instance=body["instance"],
-            message_id=key["id"],
-            remote_jid=key["remoteJid"],
+            instance=body.get("instance", ""),
+            message_id=key.get("id", ""),
+            remote_jid=key.get("remoteJid", ""),
             from_me=bool(key.get("fromMe", False)),
             push_name=data.get("pushName"),
             message_type="unsupported",
             raw_payload=body,
         )
 
-        if message_type == "conversation":
+        if message_type == "conversation" or "conversation" in message:
             parsed.message_type = "text"
             parsed.text = message.get("conversation", "")
+            return parsed
+
+        if message_type == "extendedTextMessage":
+            parsed.message_type = "text"
+            parsed.text = (message.get("extendedTextMessage") or {}).get("text", "")
             return parsed
 
         if message_type == "audioMessage":

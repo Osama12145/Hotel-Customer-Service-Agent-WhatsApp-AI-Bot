@@ -45,6 +45,10 @@ async def whatsapp_webhook(request: Request) -> JSONResponse:
             parsed.message_id,
         )
 
+        if not parsed.message_id or not parsed.remote_jid:
+            logger.info("Ignoring webhook payload without a message id or remote JID")
+            return JSONResponse({"status": "ignored_non_message_event"})
+
         if parsed.from_me:
             logger.info("Ignoring outgoing/self message %s", parsed.message_id)
             return JSONResponse({"status": "ignored_from_me"})
@@ -66,6 +70,7 @@ async def whatsapp_webhook(request: Request) -> JSONResponse:
 
         incoming_text = await _resolve_incoming_text(parsed, trace_id=trace_id)
         if not incoming_text.strip():
+            storage.mark_message_processed(parsed.message_id, parsed.remote_jid)
             return JSONResponse({"status": "ignored_empty"})
 
         storage.append_message(
@@ -122,7 +127,11 @@ async def _resolve_incoming_text(parsed, trace_id: str | None) -> str:
         base64_audio = parsed.audio_base64
         mime_type = parsed.audio_mime_type
         if not base64_audio:
-            media_payload = await evolution.get_media_base64(parsed.instance, parsed.message_id)
+            media_payload = await evolution.get_media_base64(
+                parsed.instance,
+                parsed.message_id,
+                convert_to_mp4=True,
+            )
             data = media_payload.get("data", {})
             base64_audio = data.get("base64")
             mime_type = mime_type or data.get("mimetype")
@@ -140,7 +149,11 @@ async def _resolve_incoming_text(parsed, trace_id: str | None) -> str:
         base64_image = parsed.image_base64
         mime_type = parsed.image_mime_type
         if not base64_image:
-            media_payload = await evolution.get_media_base64(parsed.instance, parsed.message_id)
+            media_payload = await evolution.get_media_base64(
+                parsed.instance,
+                parsed.message_id,
+                convert_to_mp4=False,
+            )
             data = media_payload.get("data", {})
             base64_image = data.get("base64")
             mime_type = mime_type or data.get("mimetype")
