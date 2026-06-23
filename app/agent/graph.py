@@ -6,6 +6,7 @@ import logging
 from langgraph.graph import END, StateGraph
 
 from app.agent.prompts import CLASSIFIER_SYSTEM_PROMPT, build_hotel_system_prompt
+from app.config import get_settings
 from app.models import AgentDecision, HotelAgentState
 from app.services.knowledge import KnowledgeService
 from app.services.langfuse_service import LangfuseService
@@ -34,6 +35,7 @@ class HotelAgent:
         self.language = LanguageService()
         self.openrouter = OpenRouterService()
         self.langfuse = LangfuseService()
+        self.settings = get_settings()
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -67,7 +69,8 @@ class HotelAgent:
 
     async def decide_node(self, state: HotelAgentState) -> HotelAgentState:
         history_text = "\n".join(
-            f"{item['role']}: {item['content']}" for item in state.chat_history[-8:]
+            f"{item['role']}: {item['content']}"
+            for item in state.chat_history[-self.settings.prompt_history_limit :]
         )
         system_prompt = build_hotel_system_prompt(state.retrieved_context)
         user_prompt = f"""

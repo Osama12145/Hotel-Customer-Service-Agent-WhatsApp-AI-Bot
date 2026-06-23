@@ -121,6 +121,19 @@ GET /admin/api/knowledge-gaps
 The dashboard shows monthly conversation volume, booking leads, handoffs,
 average response time, common questions, detected languages, and knowledge gaps.
 
+## Conversation memory
+
+The agent stores full chat history in SQLite and sends a recent window to the model.
+Tune the window with:
+
+```text
+CHAT_HISTORY_LIMIT=80
+PROMPT_HISTORY_LIMIT=60
+```
+
+`CHAT_HISTORY_LIMIT` controls how many recent DB messages are loaded. `PROMPT_HISTORY_LIMIT`
+controls how many of those are included in the model prompt.
+
 ## Notes
 
 - Update `data/knowledge/hafawah.md` with the real hotel information.

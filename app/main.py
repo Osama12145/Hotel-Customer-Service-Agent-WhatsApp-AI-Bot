@@ -168,7 +168,10 @@ async def whatsapp_webhook(request: Request) -> JSONResponse:
             original_message_type=parsed.message_type,
             message_id=parsed.message_id,
             raw_payload=parsed.raw_payload,
-            chat_history=storage.get_recent_history(parsed.remote_jid),
+            chat_history=storage.get_recent_history(
+                parsed.remote_jid,
+                limit=settings.chat_history_limit,
+            ),
             trace_id=trace_id,
         )
 
