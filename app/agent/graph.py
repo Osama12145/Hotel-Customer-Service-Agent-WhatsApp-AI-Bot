@@ -9,6 +9,7 @@ from app.agent.prompts import CLASSIFIER_SYSTEM_PROMPT, build_hotel_system_promp
 from app.models import AgentDecision, HotelAgentState
 from app.services.knowledge import KnowledgeService
 from app.services.langfuse_service import LangfuseService
+from app.services.language import LanguageService
 from app.services.openrouter import OpenRouterService
 from app.services.storage import StorageService
 
@@ -30,6 +31,7 @@ class HotelAgent:
     def __init__(self) -> None:
         self.storage = StorageService()
         self.knowledge = KnowledgeService()
+        self.language = LanguageService()
         self.openrouter = OpenRouterService()
         self.langfuse = LangfuseService()
         self.graph = self._build_graph()
@@ -59,6 +61,7 @@ class HotelAgent:
         return graph.compile()
 
     def retrieve_context_node(self, state: HotelAgentState) -> HotelAgentState:
+        state.detected_language = self.language.detect(state.incoming_text)
         state.retrieved_context = self.knowledge.retrieve(state.incoming_text)
         return state
 
@@ -70,6 +73,9 @@ class HotelAgent:
         user_prompt = f"""
 سياق المحادثة السابقة:
 {history_text or "لا يوجد سجل سابق."}
+
+لغة العميل المتوقعة:
+{state.detected_language}
 
 رسالة العميل الحالية:
 {state.incoming_text}
@@ -136,6 +142,8 @@ class HotelAgent:
                 }
 
         decision = AgentDecision.model_validate(decision_payload)
+        if decision.detected_language == "unknown":
+            decision.detected_language = state.detected_language  # type: ignore[assignment]
         state.decision = decision
         state.final_reply = decision.reply_text
         state.handoff_requested = decision.should_handoff
@@ -167,6 +175,15 @@ class HotelAgent:
     def finalize_node(self, state: HotelAgentState) -> HotelAgentState:
         # This node exists so we have one clear place for any post-processing later:
         # tone adjustments, response shortening, metadata, audit tags, etc.
+        if state.decision and state.decision.knowledge_gap:
+            self.storage.save_knowledge_gap(
+                question=state.incoming_text,
+                missing_topic=state.decision.missing_topic,
+                suggested_knowledge_section=state.decision.suggested_knowledge_section,
+                session_id=state.session_id,
+                language=state.decision.detected_language,
+                intent=state.decision.intent,
+            )
         return state
 
     async def run(self, state: HotelAgentState) -> HotelAgentState:

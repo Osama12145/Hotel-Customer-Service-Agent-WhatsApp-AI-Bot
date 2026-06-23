@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import logging
+from time import perf_counter
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.agent.graph import HotelAgent
 from app.config import get_settings
 from app.logging_utils import configure_logging
 from app.models import HotelAgentState
+from app.services.admin import render_admin_dashboard, require_admin
 from app.services.evolution import EvolutionService
 from app.services.langfuse_service import LangfuseService
 from app.services.media import MediaService
@@ -32,6 +34,38 @@ langfuse = LangfuseService()
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+async def admin_dashboard() -> HTMLResponse:
+    return HTMLResponse(
+        render_admin_dashboard(
+            summary=storage.get_analytics_summary(),
+            questions=storage.get_top_questions(),
+            gaps=storage.get_knowledge_gaps(),
+            messages=storage.get_recent_message_events(),
+        )
+    )
+
+
+@app.get("/admin/api/analytics/summary", dependencies=[Depends(require_admin)])
+async def admin_analytics_summary(days: int = 30) -> dict:
+    return storage.get_analytics_summary(days=days)
+
+
+@app.get("/admin/api/questions", dependencies=[Depends(require_admin)])
+async def admin_questions(days: int = 30, limit: int = 20) -> list[dict]:
+    return storage.get_top_questions(days=days, limit=limit)
+
+
+@app.get("/admin/api/messages", dependencies=[Depends(require_admin)])
+async def admin_messages(limit: int = 50) -> list[dict]:
+    return storage.get_recent_message_events(limit=limit)
+
+
+@app.get("/admin/api/knowledge-gaps", dependencies=[Depends(require_admin)])
+async def admin_knowledge_gaps(limit: int = 50) -> list[dict]:
+    return storage.get_knowledge_gaps(limit=limit)
 
 
 def _normalize_base64_media(
@@ -81,6 +115,7 @@ def _extract_base64_media(
 
 @app.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request) -> JSONResponse:
+    started_at = perf_counter()
     try:
         payload = await request.json()
         parsed = PayloadParser.parse(payload)
@@ -150,6 +185,23 @@ async def whatsapp_webhook(request: Request) -> JSONResponse:
             role="assistant",
             content=result.final_reply,
             message_type="text",
+        )
+        response_ms = int((perf_counter() - started_at) * 1000)
+        storage.save_message_event(
+            session_id=parsed.remote_jid,
+            message_id=parsed.message_id,
+            customer_name=parsed.push_name,
+            user_message=incoming_text,
+            assistant_reply=result.final_reply,
+            message_type=parsed.message_type,
+            language=result.decision.detected_language if result.decision else result.detected_language,
+            intent=result.decision.intent if result.decision else None,
+            answer_confidence=result.decision.answer_confidence if result.decision else None,
+            response_ms=response_ms,
+            handoff_requested=result.handoff_requested,
+            booking_saved=result.booking_saved,
+            knowledge_gap=result.decision.knowledge_gap if result.decision else False,
+            missing_topic=result.decision.missing_topic if result.decision else None,
         )
         storage.mark_message_processed(parsed.message_id, parsed.remote_jid)
         return JSONResponse(

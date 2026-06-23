@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     hotel_timezone: str = Field(default="Asia/Riyadh")
     hotel_phone: str = Field(default="+966500000000")
     reception_whatsapp: str = Field(default="+966500000001")
+    admin_api_key: str = Field(default="")
 
     database_url: str = Field(default=f"sqlite:///{(DATA_DIR / 'agent.db').as_posix()}")
     knowledge_file: str = Field(default=(DATA_DIR / "knowledge" / "hafawah.md").as_posix())

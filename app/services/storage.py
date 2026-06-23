@@ -4,8 +4,9 @@ import csv
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from app.config import get_settings
 from app.models import AgentDecision
@@ -74,6 +75,40 @@ class StorageService:
                     reason TEXT NOT NULL,
                     last_user_message TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS message_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    message_id TEXT,
+                    customer_name TEXT,
+                    user_message TEXT NOT NULL,
+                    assistant_reply TEXT NOT NULL,
+                    message_type TEXT NOT NULL,
+                    language TEXT,
+                    intent TEXT,
+                    answer_confidence TEXT,
+                    response_ms INTEGER,
+                    handoff_requested INTEGER DEFAULT 0,
+                    booking_saved INTEGER DEFAULT 0,
+                    knowledge_gap INTEGER DEFAULT 0,
+                    missing_topic TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS knowledge_gaps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    normalized_question TEXT NOT NULL UNIQUE,
+                    sample_question TEXT NOT NULL,
+                    missing_topic TEXT,
+                    suggested_knowledge_section TEXT,
+                    session_id TEXT,
+                    language TEXT,
+                    intent TEXT,
+                    occurrences INTEGER DEFAULT 1,
+                    status TEXT DEFAULT 'open',
+                    first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
             )
@@ -197,3 +232,191 @@ class StorageService:
                 """,
                 (session_id, reason, last_user_message),
             )
+
+    def save_message_event(
+        self,
+        *,
+        session_id: str,
+        message_id: str | None,
+        customer_name: str | None,
+        user_message: str,
+        assistant_reply: str,
+        message_type: str,
+        language: str | None,
+        intent: str | None,
+        answer_confidence: str | None,
+        response_ms: int | None,
+        handoff_requested: bool,
+        booking_saved: bool,
+        knowledge_gap: bool,
+        missing_topic: str | None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO message_events (
+                    session_id, message_id, customer_name, user_message, assistant_reply,
+                    message_type, language, intent, answer_confidence, response_ms,
+                    handoff_requested, booking_saved, knowledge_gap, missing_topic
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    message_id,
+                    customer_name,
+                    user_message,
+                    assistant_reply,
+                    message_type,
+                    language,
+                    intent,
+                    answer_confidence,
+                    response_ms,
+                    int(handoff_requested),
+                    int(booking_saved),
+                    int(knowledge_gap),
+                    missing_topic,
+                ),
+            )
+
+    def save_knowledge_gap(
+        self,
+        *,
+        question: str,
+        missing_topic: str | None,
+        suggested_knowledge_section: str | None,
+        session_id: str,
+        language: str | None,
+        intent: str | None,
+    ) -> None:
+        normalized_question = self._normalize_question(question)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO knowledge_gaps (
+                    normalized_question, sample_question, missing_topic,
+                    suggested_knowledge_section, session_id, language, intent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(normalized_question) DO UPDATE SET
+                    occurrences = occurrences + 1,
+                    missing_topic = COALESCE(excluded.missing_topic, knowledge_gaps.missing_topic),
+                    suggested_knowledge_section = COALESCE(
+                        excluded.suggested_knowledge_section,
+                        knowledge_gaps.suggested_knowledge_section
+                    ),
+                    session_id = excluded.session_id,
+                    language = excluded.language,
+                    intent = excluded.intent,
+                    last_seen_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    normalized_question,
+                    question,
+                    missing_topic,
+                    suggested_knowledge_section,
+                    session_id,
+                    language,
+                    intent,
+                ),
+            )
+
+    def get_analytics_summary(self, days: int = 30) -> dict[str, Any]:
+        since = self._since(days)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT session_id) AS conversations,
+                    COUNT(*) AS messages,
+                    COALESCE(SUM(booking_saved), 0) AS booking_leads,
+                    COALESCE(SUM(handoff_requested), 0) AS handoffs,
+                    COALESCE(SUM(knowledge_gap), 0) AS knowledge_gaps,
+                    ROUND(AVG(response_ms), 0) AS avg_response_ms
+                FROM message_events
+                WHERE created_at >= ?
+                """,
+                (since,),
+            ).fetchone()
+
+            intents = conn.execute(
+                """
+                SELECT intent, COUNT(*) AS count
+                FROM message_events
+                WHERE created_at >= ? AND intent IS NOT NULL
+                GROUP BY intent
+                ORDER BY count DESC
+                """,
+                (since,),
+            ).fetchall()
+
+            languages = conn.execute(
+                """
+                SELECT language, COUNT(*) AS count
+                FROM message_events
+                WHERE created_at >= ? AND language IS NOT NULL
+                GROUP BY language
+                ORDER BY count DESC
+                """,
+                (since,),
+            ).fetchall()
+
+        return {
+            "days": days,
+            "conversations": row["conversations"] or 0,
+            "messages": row["messages"] or 0,
+            "booking_leads": row["booking_leads"] or 0,
+            "handoffs": row["handoffs"] or 0,
+            "knowledge_gaps": row["knowledge_gaps"] or 0,
+            "avg_response_ms": row["avg_response_ms"] or 0,
+            "intents": [dict(item) for item in intents],
+            "languages": [dict(item) for item in languages],
+        }
+
+    def get_top_questions(self, days: int = 30, limit: int = 20) -> list[dict[str, Any]]:
+        since = self._since(days)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_message, intent, language, COUNT(*) AS count
+                FROM message_events
+                WHERE created_at >= ?
+                GROUP BY LOWER(TRIM(user_message)), intent, language
+                ORDER BY count DESC, MAX(created_at) DESC
+                LIMIT ?
+                """,
+                (since, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_recent_message_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM message_events
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_knowledge_gaps(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM knowledge_gaps
+                ORDER BY status = 'open' DESC, occurrences DESC, last_seen_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _since(days: int) -> str:
+        return (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _normalize_question(question: str) -> str:
+        return " ".join(question.strip().lower().split())[:300]

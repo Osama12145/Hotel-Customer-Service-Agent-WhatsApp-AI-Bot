@@ -36,7 +36,15 @@ class BookingDetails(BaseModel):
 
 
 class AgentDecision(BaseModel):
-    intent: Literal["faq", "booking", "handoff", "other"] = "faq"
+    intent: Literal[
+        "faq",
+        "pricing",
+        "booking",
+        "nearby_services",
+        "guest_service",
+        "handoff",
+        "other",
+    ] = "faq"
     should_handoff: bool = False
     handoff_reason: str | None = None
     reply_text: str
@@ -44,6 +52,11 @@ class AgentDecision(BaseModel):
     booking_ready_for_save: bool = False
     needs_more_booking_info: bool = False
     missing_booking_fields: list[str] = Field(default_factory=list)
+    detected_language: Literal["ar", "en", "ur", "id", "tr", "unknown"] = "unknown"
+    answer_confidence: Literal["high", "medium", "low"] = "medium"
+    knowledge_gap: bool = False
+    missing_topic: str | None = None
+    suggested_knowledge_section: str | None = None
 
 
 @dataclass
@@ -55,6 +68,7 @@ class HotelAgentState:
     message_id: str
     raw_payload: dict
     chat_history: list[dict] = field(default_factory=list)
+    detected_language: str = "unknown"
     retrieved_context: str = ""
     decision: AgentDecision | None = None
     final_reply: str = ""
